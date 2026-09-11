@@ -5,7 +5,9 @@
 > **الإصدار:** 1.0.0  
 > **النواة:** Asta  
 > **الاسم الظاهر للبوت:** Khalid
-
+> **معلمي:** Venom
+> **يوزر المطور:** @khalid_hisham
+> **يوزر معلمي:** @lllllllIIIIIlllllIIIIIIlllll
 ---
 
 ## ✨ المميزات
