@@ -10,9 +10,14 @@
 
 > **معلمي:** Venom
 
-> **يوزر المطور:** @khalid_hisham
+> **يوزر واتس المطور:** @khalid_hisham
 
-> **يوزر معلمي:** @lllllllIIIIIlllllIIIIIIlllll
+> **يوزر واتس معلمي:** @lllllllIIIIIlllllIIIIIIlllll
+
+> **يوزر تلي المطور:** @Khalid_Asta
+
+> **يوزر تلي معلمي:** @V_K_U1
+
 ---
 
 ## ✨ المميزات
