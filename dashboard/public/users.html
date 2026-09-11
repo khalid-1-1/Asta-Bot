@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asta Dashboard - User Management</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/theme.js"></script>
+<script src="/assets/i18n.js"></script>
+</head>
+<body>
+<script src="/assets/app.js"></script>
+<script>
+let assignableRoles = [];
+let allUsers = [];
+
+function setStatus(msg, isError) {
+    const el = document.getElementById("userStatus");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.className = isError ? "error-text" : "muted";
+}
+
+// Role identifiers (owner/admin/manager/viewer/pending) are a fixed,
+// known set (see dashboard/lib/roles.js) - translate them client-side,
+// falling back to a capitalized version of the raw id for anything
+// unrecognized so a future role never renders as a raw i18n key.
+function roleName(role) {
+    const translated = t("role_" + role);
+    return translated === "role_" + role ? (role.charAt(0).toUpperCase() + role.slice(1)) : translated;
+}
+
+function roleOptionsHtml(selected) {
+    return assignableRoles.map(r => `<option value="${r}" ${r === selected ? "selected" : ""}>${escapeHtml(roleName(r))}</option>`).join("");
+}
+
+async function loadUsers(preloaded) {
+    const { users, assignableRoles: roles } = preloaded || await api("/api/users");
+    allUsers = users;
+    assignableRoles = roles;
+
+    document.getElementById("usersBody").innerHTML = users.map(u => {
+        const isSelf = u.username === CURRENT_USER;
+        const isPrimary = u.isPrimaryOwner;
+        const isPending = u.role === "pending";
+        const protectedNote = isPrimary ? ` <span class="badge protected" title="${escapeHtml(t('cannotBeModified'))}">${escapeHtml(t('protectedBadge'))}</span>` : "";
+        const pendingNote = isPending ? ` <span class="badge warning" title="${escapeHtml(t('pendingApprovalNote'))}">${escapeHtml(t('pendingApprovalBadge'))}</span>` : "";
+        return `
+        <tr>
+          <td>${escapeHtml(u.username)}${protectedNote}${pendingNote}${isSelf ? ` <span class="muted">${escapeHtml(t('youSuffix'))}</span>` : ""}</td>
+          <td>
+            ${isPrimary
+                ? `<span class="badge info">${escapeHtml(roleName(u.role))}</span>`
+                : `<select data-role-select="${escapeHtml(u.username)}" ${isSelf ? "disabled" : ""}>${isPending ? `<option value="" selected disabled>${escapeHtml(t('selectRolePlaceholder'))}</option>` : ""}${roleOptionsHtml(u.role)}</select>`}
+          </td>
+          <td><span class="badge ${u.disabled ? "disabled" : "success"}">${u.disabled ? escapeHtml(t("disabledBadge")) : escapeHtml(t("statActive")) || "active"}</span></td>
+          <td>${fmtWhen(u.lastLoginAt)}${u.lastLoginIp ? ` <span class="muted">(${escapeHtml(u.lastLoginIp)})</span>` : ""}</td>
+          <td>${fmtWhen(u.createdAt)}</td>
+          <td style="white-space:nowrap;">
+            ${isPrimary ? `<span class="muted">-</span>` : `
+            <button class="secondary" data-role-apply="${escapeHtml(u.username)}" ${isSelf ? "disabled" : ""}>${escapeHtml(t("btnChangeRole"))}</button>
+            <button class="secondary" data-reset="${escapeHtml(u.username)}">${escapeHtml(t("btnResetPassword"))}</button>
+            <button class="secondary" data-toggle="${escapeHtml(u.username)}" data-disabled="${u.disabled}" ${isSelf ? "disabled" : ""}>${u.disabled ? escapeHtml(t("btnEnable")) : escapeHtml(t("btnDisable"))}</button>
+            <button class="danger" data-delete="${escapeHtml(u.username)}" ${isSelf ? "disabled" : ""}>${escapeHtml(t("btnDelete"))}</button>`}
+          </td>
+        </tr>`;
+    }).join("") || `<tr><td colspan="6" class="muted">${escapeHtml(t("noUsersYet"))}</td></tr>`;
+
+    document.querySelectorAll("[data-role-apply]").forEach(btn => btn.addEventListener("click", () => changeRole(btn.getAttribute("data-role-apply"))));
+    document.querySelectorAll("[data-reset]").forEach(btn => btn.addEventListener("click", () => resetPassword(btn.getAttribute("data-reset"))));
+    document.querySelectorAll("[data-toggle]").forEach(btn => btn.addEventListener("click", () => toggleDisabled(btn.getAttribute("data-toggle"), btn.getAttribute("data-disabled") !== "true")));
+    document.querySelectorAll("[data-delete]").forEach(btn => btn.addEventListener("click", () => deleteUser(btn.getAttribute("data-delete"))));
+}
+
+async function createUser() {
+    const username = document.getElementById("newUsername").value.trim();
+    const password = document.getElementById("newPassword").value;
+    const role = document.getElementById("newRole").value;
+    if (!username || !password) { setStatus(t("usernameAndPasswordRequired"), true); return; }
+    try {
+        await api("/api/users", { method: "POST", body: { username, password, role } });
+        setStatus(t("userCreated").replace("{u}", username));
+        document.getElementById("newUsername").value = "";
+        document.getElementById("newPassword").value = "";
+        await loadUsers();
+    } catch (e) {
+        setStatus(e.message, true);
+    }
+}
+
+async function changeRole(username) {
+    const select = document.querySelector(`[data-role-select="${CSS.escape(username)}"]`);
+    const role = select ? select.value : null;
+    if (!role) { setStatus(t("pickRoleFirst"), true); return; }
+    try {
+        await api("/api/users/role", { method: "POST", body: { username, role } });
+        setStatus(t("roleUpdated").replace("{u}", username).replace("{r}", roleName(role)));
+    } catch (e) {
+        setStatus(e.message, true);
+    }
+    await loadUsers();
+}
+
+async function toggleDisabled(username, disabled) {
+    if (disabled && !confirm(t("confirmDisableUser").replace("{u}", username))) return;
+    try {
+        await api("/api/users/disable", { method: "POST", body: { username, disabled } });
+        setStatus((disabled ? t("userDisabled") : t("userEnabled")).replace("{u}", username));
+    } catch (e) {
+        setStatus(e.message, true);
+    }
+    await loadUsers();
+}
+
+async function deleteUser(username) {
+    if (!confirm(t("confirmDeleteUser").replace("{u}", username))) return;
+    try {
+        await api("/api/users/delete", { method: "POST", body: { username } });
+        setStatus(t("userDeleted").replace("{u}", username));
+    } catch (e) {
+        setStatus(e.message, true);
+    }
+    await loadUsers();
+}
+
+async function resetPassword(username) {
+    const newPassword = prompt(t("promptNewPassword").replace("{u}", username));
+    if (!newPassword) return;
+    try {
+        await api("/api/users/reset-password", { method: "POST", body: { username, newPassword } });
+        setStatus(t("passwordResetFor").replace("{u}", username));
+    } catch (e) {
+        setStatus(e.message, true);
+    }
+}
+
+async function render() {
+    const content = document.getElementById("content");
+    content.innerHTML = loadingState(t("loadingUsers"));
+
+    let initial;
+    try {
+        initial = await api("/api/users");
+    } catch (e) {
+        content.innerHTML = e.offline ? offlineState() : errorState(e.message);
+        return;
+    }
+    // Populate assignableRoles BEFORE building the "Add User" form HTML,
+    // otherwise the Role <select> renders with zero <option> elements.
+    assignableRoles = initial.assignableRoles;
+
+    content.innerHTML = `
+      <p class="subtitle">${escapeHtml(t("usersSubtitle"))}</p>
+      <div class="card" style="max-width:720px;margin-bottom:16px;">
+        <div class="form-row"><label for="newUsername">${escapeHtml(t("newUsernameLabel"))}</label><input type="text" id="newUsername" placeholder="${escapeHtml(t("newUsernamePlaceholder"))}"></div>
+        <div class="form-row"><label for="newPassword">${escapeHtml(t("newPasswordLabel"))}</label><input type="password" id="newPassword" placeholder="${escapeHtml(t("newPasswordPlaceholder"))}" autocomplete="new-password"></div>
+        <div class="form-row"><label for="newRole">${escapeHtml(t("roleLabel"))}</label><select id="newRole">${roleOptionsHtml("viewer")}</select></div>
+        <button class="primary" id="createUserBtn">${escapeHtml(t("btnAddUser"))}</button>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>${escapeHtml(t("tableUsername"))}</th><th>${escapeHtml(t("tableRole"))}</th><th>${escapeHtml(t("tableStatus"))}</th><th>${escapeHtml(t("tableLastLogin"))}</th><th>${escapeHtml(t("tableCreated"))}</th><th></th></tr></thead>
+        <tbody id="usersBody"></tbody>
+      </table>
+      </div>
+      <div id="userStatus" class="muted" style="margin-top:12px;"></div>`;
+
+    await loadUsers(initial);
+    document.getElementById("createUserBtn").addEventListener("click", createUser);
+}
+
+(async () => {
+    await requireAuth();
+    renderShell("/users", t("userManagement"));
+    await render();
+})();
+</script>
+</body>
+</html>

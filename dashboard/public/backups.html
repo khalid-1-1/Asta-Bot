@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asta Dashboard - Backups</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/theme.js"></script>
+<script src="/assets/i18n.js"></script>
+</head>
+<body>
+<script src="/assets/app.js"></script>
+<script>
+function fmtSizeKB(n) {
+    if (!n) return "0 KB";
+    return (n / 1024).toFixed(1) + " KB";
+}
+
+async function loadBackups() {
+    const { backups } = await api("/api/backups");
+    document.getElementById("backupsBody").innerHTML = backups.length ? backups.map(b => `
+      <tr>
+        <td>${escapeHtml(b.name)}</td>
+        <td>${fmtWhen(b.createdAt)}</td>
+        <td>${fmtSizeKB(b.sizeBytes)}</td>
+        <td><span class="badge ${b.verified ? "success" : "danger"}">${b.verified ? escapeHtml(t("verifiedBadge")) : escapeHtml(t("checksumFailedBadge"))}</span></td>
+        <td style="white-space:nowrap;">
+          <button class="secondary" data-restore="${escapeHtml(b.id)}" ${b.verified ? "" : `disabled title="${escapeHtml(t('cannotRestoreUnverified'))}"`}>${escapeHtml(t("btnRestore"))}</button>
+          <button class="danger" data-delete="${escapeHtml(b.id)}">${escapeHtml(t("btnDelete"))}</button>
+        </td>
+      </tr>`).join("") : `<tr><td colspan="5" class="muted">${escapeHtml(t("noBackupsYet"))}</td></tr>`;
+
+    document.querySelectorAll("[data-restore]").forEach(btn => btn.addEventListener("click", () => restoreBackup(btn.getAttribute("data-restore"))));
+    document.querySelectorAll("[data-delete]").forEach(btn => btn.addEventListener("click", () => deleteBackup(btn.getAttribute("data-delete"))));
+}
+
+async function createBackup() {
+    const status = document.getElementById("backupStatus");
+    const name = document.getElementById("backupName").value.trim() || "backup";
+    status.textContent = t("creatingBackup");
+    status.className = "muted";
+    try {
+        const res = await api("/api/backups", { method: "POST", body: { name } });
+        status.textContent = res.ok ? t("backupCreated") : t("failedPrefix").replace("{r}", res.reason);
+        status.className = res.ok ? "muted" : "error-text";
+        document.getElementById("backupName").value = "";
+    } catch (e) {
+        status.textContent = e.message;
+        status.className = "error-text";
+    }
+    await loadBackups();
+}
+
+async function restoreBackup(id) {
+    if (!confirm(t("confirmRestoreBackup"))) return;
+    const status = document.getElementById("backupStatus");
+    status.textContent = t("restoring");
+    try {
+        const res = await api("/api/backups/restore", { method: "POST", body: { id } });
+        status.textContent = res.ok ? t("restoredWithSafety").replace("{id}", res.safetyBackupId) : t("failedPrefix").replace("{r}", res.reason);
+        status.className = res.ok ? "muted" : "error-text";
+    } catch (e) {
+        status.textContent = e.message;
+        status.className = "error-text";
+    }
+    await loadBackups();
+}
+
+async function deleteBackup(id) {
+    if (!confirm(t("confirmDeleteBackup"))) return;
+    const status = document.getElementById("backupStatus");
+    try {
+        await api("/api/backups/delete", { method: "POST", body: { id } });
+    } catch (e) {
+        status.textContent = e.message;
+        status.className = "error-text";
+    }
+    await loadBackups();
+}
+
+async function render() {
+    const content = document.getElementById("content");
+    content.innerHTML = loadingState(t("loadingBackups"));
+
+    try {
+        await api("/api/backups");
+    } catch (e) {
+        content.innerHTML = e.offline ? offlineState() : errorState(e.message);
+        return;
+    }
+
+    content.innerHTML = `
+      <p class="subtitle">${escapeHtml(t("backupsSubtitle"))}</p>
+      <div class="toolbar">
+        <input type="text" id="backupName" placeholder="${escapeHtml(t("backupNamePlaceholder"))}">
+        <button class="primary" id="createBtn">${escapeHtml(t("btnCreateBackup"))}</button>
+        <span class="muted" id="backupStatus"></span>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>${escapeHtml(t("tableName"))}</th><th>${escapeHtml(t("tableCreated"))}</th><th>${escapeHtml(t("tableSize"))}</th><th>${escapeHtml(t("tableVerified"))}</th><th></th></tr></thead>
+        <tbody id="backupsBody"></tbody>
+      </table>
+      </div>`;
+    document.getElementById("createBtn").addEventListener("click", createBackup);
+    await loadBackups();
+}
+
+(async () => {
+    await requireAuth();
+    renderShell("/backups", t("backups"));
+    await render();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asta Dashboard - Statistics</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/theme.js"></script>
+<script src="/assets/i18n.js"></script>
+</head>
+<body>
+<script src="/assets/app.js"></script>
+<script src="/assets/charts.js"></script>
+<script>
+let pollTimer = null;
+const COLORS = {
+    accent: "#6d8bff", accent2: "#b18aff", success: "#35d399",
+    danger: "#ff6570", warning: "#ffb545", info: "#4fb8ff",
+};
+
+function hourLabels() {
+    return Array.from({ length: 24 }, (_, h) => String(h).padStart(2, "0") + ":00");
+}
+
+let firstLoad = true;
+
+async function render() {
+    const content = document.getElementById("content");
+    if (firstLoad) content.innerHTML = loadingState(t("loadingStatistics"));
+
+    let statsRes, advRes;
+    try {
+        [statsRes, advRes] = await Promise.all([
+            api("/api/stats"),
+            api("/api/stats/advanced"),
+        ]);
+    } catch (e) {
+        if (firstLoad) withPreservedScroll(() => { content.innerHTML = e.offline ? offlineState() : errorState(e.message); });
+        return;
+    } finally {
+        firstLoad = false;
+    }
+
+    const stats = statsRes.stats;
+    const adv = advRes.stats;
+
+    if (!adv) {
+        withPreservedScroll(() => { content.innerHTML = emptyState(t("advStatsUnavailable"), t("advStatsUnavailableMsg")); });
+        return;
+    }
+
+    const dailyUsage = adv.dailyUsage || [];
+    const trendLabels = dailyUsage.map((d) => d.date.slice(5));
+
+    const trendChart = AstaCharts.line({
+        labels: trendLabels,
+        series: [
+            { id: "cmd2", name: t("legendCommands"), color: COLORS.accent, data: dailyUsage.map((d) => d.commands) },
+            { id: "msg2", name: t("statMessages"), color: COLORS.info, data: dailyUsage.map((d) => d.messages || 0) },
+            { id: "err2", name: t("legendErrors"), color: COLORS.danger, data: dailyUsage.map((d) => d.errors), area: false },
+        ],
+        height: 260,
+        emptyMessage: t("noActivityRetained").replace("{n}", adv.retentionDays),
+    });
+
+    const hourlyCommandsChart = AstaCharts.bar({
+        labels: hourLabels(),
+        series: [{ name: t("legendCommands"), color: COLORS.accent, data: adv.usageByHour || [] }],
+        height: 200,
+        emptyMessage: t("noCommandsToday"),
+    });
+    const hourlyMessagesChart = AstaCharts.bar({
+        labels: hourLabels(),
+        series: [{ name: t("statMessages"), color: COLORS.info, data: adv.messagesByHour || [] }],
+        height: 200,
+        emptyMessage: t("noMessagesToday"),
+    });
+
+    const pluginColors = [COLORS.accent, COLORS.accent2, COLORS.info, COLORS.success, COLORS.warning, COLORS.danger];
+    const pluginUsageChart = AstaCharts.bar({
+        labels: (adv.mostUsedPlugins || []).map((p) => p.plugin.split("/").pop()),
+        series: [{ name: t("tableUses"), color: COLORS.accent, data: (adv.mostUsedPlugins || []).map((p) => p.count) }],
+        height: Math.max(180, (adv.mostUsedPlugins || []).length * 34),
+        horizontal: true,
+        emptyMessage: t("noPluginUsageData"),
+    });
+
+    const errorsByCommandChart = AstaCharts.bar({
+        labels: (adv.errorsByCommand || []).map((e) => e.command),
+        series: [{ name: t("legendErrors"), color: COLORS.danger, data: (adv.errorsByCommand || []).map((e) => e.count) }],
+        height: Math.max(160, (adv.errorsByCommand || []).length * 34),
+        horizontal: true,
+        emptyMessage: t("noErrorsRecorded"),
+    });
+
+    const topCommandsRows = (stats.topCommands || []).map((c, i) => `
+        <tr><td>#${i + 1}</td><td>${escapeHtml(c.command)}</td><td>${fmtNum(c.count)}</td></tr>`).join("");
+
+    const html = `
+        <div class="grid">
+            <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("statTodayCommands"))}</div><div class="icon-wrap">${icon("controls")}</div></div><div class="value">${fmtNum(adv.today.commands)}</div></div>
+            <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("statTodayMessages"))}</div><div class="icon-wrap info">${icon("logs")}</div></div><div class="value">${fmtNum(adv.today.messages || 0)}</div></div>
+            <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("statTodayErrors"))}</div><div class="icon-wrap ${adv.today.errors ? "danger" : "success"}">${icon("alerts")}</div></div><div class="value ${adv.today.errors ? "bad" : "ok"}">${fmtNum(adv.today.errors)}</div></div>
+            <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("stat7dCommands"))}</div><div class="icon-wrap">${icon("controls")}</div></div><div class="value">${fmtNum(adv.weekly.commands)}</div></div>
+            <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("stat7dMessages"))}</div><div class="icon-wrap info">${icon("logs")}</div></div><div class="value">${fmtNum(adv.weekly.messages || 0)}</div></div>
+            <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("statKnownUsers"))}</div><div class="icon-wrap">${icon("overview")}</div></div><div class="value">${fmtNum(stats.knownUsers)}</div></div>
+            <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("statKnownChats"))}</div><div class="icon-wrap">${icon("overview")}</div></div><div class="value">${fmtNum(stats.knownChats)}</div></div>
+            <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("statRetentionWindow"))}</div><div class="icon-wrap">${icon("stats")}</div></div><div class="value">${adv.retentionDays}${escapeHtml(t("daysUnit"))}</div></div>
+        </div>
+
+        <div class="section-title"><h3>${escapeHtml(t("secUsageTrend"))}</h3></div>
+        <div class="card chart-card">
+            <div class="chart-legend">
+                <span><span class="dot" style="background:${COLORS.accent}"></span>${escapeHtml(t("legendCommands"))}</span>
+                <span><span class="dot" style="background:${COLORS.info}"></span>${escapeHtml(t("statMessages"))}</span>
+                <span><span class="dot" style="background:${COLORS.danger}"></span>${escapeHtml(t("legendErrors"))}</span>
+            </div>
+            ${trendChart}
+        </div>
+
+        <div class="section-title"><h3>${escapeHtml(t("secTodayByHour"))}</h3></div>
+        <div class="grid cols-2">
+            <div class="card chart-card"><div class="chart-head"><h4>${escapeHtml(t("legendCommands"))}</h4></div>${hourlyCommandsChart}</div>
+            <div class="card chart-card"><div class="chart-head"><h4>${escapeHtml(t("statMessages"))}</h4></div>${hourlyMessagesChart}</div>
+        </div>
+
+        <div class="section-title"><h3>${escapeHtml(t("chartPluginUsageTitle"))}</h3></div>
+        <div class="card chart-card">${pluginUsageChart}</div>
+
+        <div class="section-title"><h3>${escapeHtml(t("secErrorsByCommand"))}</h3></div>
+        <div class="card chart-card">${errorsByCommandChart}</div>
+
+        <div class="section-title"><h3>${escapeHtml(t("secTopCommands"))}</h3></div>
+        <div class="table-wrap">
+        <table>
+            <thead><tr><th>${escapeHtml(t("tableRank"))}</th><th>${escapeHtml(t("tableCommand"))}</th><th>${escapeHtml(t("tableUses"))}</th></tr></thead>
+            <tbody>${topCommandsRows || `<tr><td colspan="3" class="muted">${escapeHtml(t("noCommandsRecorded"))}</td></tr>`}</tbody>
+        </table>
+        </div>
+    `;
+    withPreservedScroll(() => { content.innerHTML = html; });
+}
+
+(async () => {
+    await requireAuth();
+    renderShell("/statistics", t("statistics"));
+    await render();
+    pollTimer = setInterval(render, 15000);
+})();
+</script>
+</body>
+</html>

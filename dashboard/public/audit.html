@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asta Dashboard - Audit Log</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/theme.js"></script>
+<script src="/assets/i18n.js"></script>
+</head>
+<body>
+<script src="/assets/app.js"></script>
+<script>
+let nextOffset = null;
+
+async function loadPage(before) {
+    const url = "/api/audit" + (before ? `?before=${before}` : "");
+    const { entries, nextOffset: next } = await api(url);
+    nextOffset = next;
+    const body = document.getElementById("auditBody");
+    const rows = entries.map(e => `
+      <tr>
+        <td>${fmtWhen(e.timestamp)}</td>
+        <td>${escapeHtml(e.action)}</td>
+        <td><span class="badge ${e.result === "success" ? "success" : e.result === "failed" ? "danger" : "warning"}">${escapeHtml(e.result)}</span></td>
+        <td>${escapeHtml(e.admin || "-")}</td>
+        <td>${escapeHtml(e.target || "-")}</td>
+      </tr>`).join("");
+    if (before) {
+        body.insertAdjacentHTML("beforeend", rows);
+    } else {
+        body.innerHTML = rows || `<tr><td colspan="5" class="muted">${escapeHtml(t("noAuditEvents"))}</td></tr>`;
+    }
+    document.getElementById("loadMoreBtn").style.display = next ? "inline-block" : "none";
+}
+
+async function render() {
+    const content = document.getElementById("content");
+    content.innerHTML = loadingState(t("loadingAuditLog"));
+
+    try {
+        await api("/api/audit");
+    } catch (e) {
+        content.innerHTML = e.offline ? offlineState() : errorState(e.message);
+        return;
+    }
+
+    content.innerHTML = `
+      <p class="subtitle">${escapeHtml(t("auditSubtitle"))}</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>${escapeHtml(t("tableTime"))}</th><th>${escapeHtml(t("tableAction"))}</th><th>${escapeHtml(t("tableResult"))}</th><th>${escapeHtml(t("tableAdmin"))}</th><th>${escapeHtml(t("tableTarget"))}</th></tr></thead>
+        <tbody id="auditBody"></tbody>
+      </table>
+      </div>
+      <div class="toolbar">
+        <button class="secondary" id="loadMoreBtn" style="display:none">${escapeHtml(t("btnLoadOlder"))}</button>
+      </div>`;
+    document.getElementById("loadMoreBtn").addEventListener("click", () => loadPage(nextOffset));
+    await loadPage();
+}
+
+(async () => {
+    await requireAuth();
+    renderShell("/audit", t("auditLog"));
+    await render();
+})();
+</script>
+</body>
+</html>

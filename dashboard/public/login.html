@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asta Dashboard - Login</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/theme.js"></script>
+<script src="/assets/i18n.js"></script>
+</head>
+<body>
+<div style="position:fixed;top:14px;inset-inline-end:14px;display:flex;gap:8px;z-index:10;">
+  <button class="icon-btn" id="themeToggleBtn" title="Toggle theme"></button>
+  <button class="icon-btn" id="langToggleBtn" style="font-size:11.5px;font-weight:700;" title="Language"></button>
+</div>
+<div class="login-wrap">
+  <div class="login-box">
+    <div class="brand-mark" style="width:48px;height:48px;font-size:22px;">⚙️</div>
+    <h1 id="loginTitle">Asta Bot Dashboard</h1>
+    <div class="login-sub" id="modeSub">Sign in to manage your bot</div>
+    <div class="error-text" id="err"></div>
+    <div class="muted" id="okMsg" style="display:none;margin-bottom:10px;font-size:12.5px;"></div>
+
+    <form id="loginForm">
+      <label class="field-label" for="username" id="usernameLabel">Username</label>
+      <input type="text" id="username" autocomplete="username" required>
+      <label class="field-label" for="password" id="passwordLabel">Password</label>
+      <input type="password" id="password" autocomplete="current-password" required>
+      <button class="primary" type="submit" id="submitBtn">Sign In</button>
+    </form>
+
+    <form id="registerForm" style="display:none;">
+      <label class="field-label" for="regUsername" id="regUsernameLabel">Username</label>
+      <input type="text" id="regUsername" autocomplete="username" required>
+      <label class="field-label" for="regPassword" id="regPasswordLabel">New password</label>
+      <input type="password" id="regPassword" autocomplete="new-password" required>
+      <button class="primary" type="submit" id="registerBtn">Create Account</button>
+      <p class="muted" style="font-size:11.5px;margin-top:10px;" id="newAccountNote">New accounts have no permissions until a Primary Owner or Admin approves them and assigns a role.</p>
+    </form>
+
+    <div style="margin-top:14px;text-align:center;">
+      <a href="#" id="toggleModeLink" style="font-size:12.5px;">Create an account</a>
+    </div>
+  </div>
+</div>
+<script>
+let mode = "login";
+const t = (key) => (window.AstaI18n ? window.AstaI18n.t(key) : key);
+
+function applyI18n() {
+    document.getElementById("loginTitle").textContent = t("loginTitle");
+    document.title = t("loginTitle");
+    document.getElementById("usernameLabel").textContent = t("username");
+    document.getElementById("username").placeholder = t("usernamePlaceholder");
+    document.getElementById("passwordLabel").textContent = t("password");
+    document.getElementById("password").placeholder = t("passwordPlaceholder");
+    document.getElementById("submitBtn").textContent = t("signIn");
+    document.getElementById("regUsernameLabel").textContent = t("username");
+    document.getElementById("regUsername").placeholder = t("chooseUsername");
+    document.getElementById("regPasswordLabel").textContent = t("newPassword");
+    document.getElementById("regPassword").placeholder = t("atLeast8Chars");
+    document.getElementById("registerBtn").textContent = t("createAccountBtn");
+    document.getElementById("newAccountNote").textContent = t("newAccountNote");
+    document.getElementById("themeToggleBtn").textContent = window.AstaTheme.get() === "light" ? "🌙" : "☀️";
+    document.getElementById("themeToggleBtn").title = t("themeToggle");
+    document.getElementById("langToggleBtn").textContent = window.AstaI18n.get() === "ar" ? "EN" : "AR";
+    document.getElementById("langToggleBtn").title = t("langToggle");
+    setModeText();
+}
+
+function setModeText() {
+    document.getElementById("modeSub").textContent = mode === "login" ? t("loginSubtitle") : t("registerSubtitle");
+    document.getElementById("toggleModeLink").textContent = mode === "login" ? t("createAccountLink") : t("alreadyHaveAccount");
+}
+
+function setMode(next) {
+    mode = next;
+    document.getElementById("loginForm").style.display = mode === "login" ? "block" : "none";
+    document.getElementById("registerForm").style.display = mode === "register" ? "block" : "none";
+    setModeText();
+    document.getElementById("err").textContent = "";
+    document.getElementById("okMsg").style.display = "none";
+}
+
+document.getElementById("toggleModeLink").addEventListener("click", (e) => {
+    e.preventDefault();
+    setMode(mode === "login" ? "register" : "login");
+});
+
+document.getElementById("themeToggleBtn").addEventListener("click", () => {
+    window.AstaTheme.toggle();
+    document.getElementById("themeToggleBtn").textContent = window.AstaTheme.get() === "light" ? "🌙" : "☀️";
+});
+document.getElementById("langToggleBtn").addEventListener("click", () => {
+    window.AstaI18n.toggle();
+    applyI18n();
+});
+
+applyI18n();
+
+document.getElementById("loginForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById("err");
+    const btn = document.getElementById("submitBtn");
+    errEl.textContent = "";
+    btn.disabled = true;
+    btn.textContent = t("signingIn");
+    try {
+        const res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({
+                username: document.getElementById("username").value,
+                password: document.getElementById("password").value,
+            }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Login failed");
+        window.location.href = "/";
+    } catch (err) {
+        errEl.textContent = err.message;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = t("signIn");
+    }
+});
+
+document.getElementById("registerForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById("err");
+    const okEl = document.getElementById("okMsg");
+    const btn = document.getElementById("registerBtn");
+    errEl.textContent = "";
+    okEl.style.display = "none";
+    btn.disabled = true;
+    btn.textContent = t("creatingAccount");
+    try {
+        const res = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({
+                username: document.getElementById("regUsername").value,
+                password: document.getElementById("regPassword").value,
+            }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Could not create account");
+        okEl.textContent = data.message || t("defaultRegisterSuccess");
+        okEl.style.display = "block";
+        document.getElementById("registerForm").reset();
+        setTimeout(() => setMode("login"), 2500);
+    } catch (err) {
+        errEl.textContent = err.message;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = t("createAccountBtn");
+    }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asta Dashboard - Account &amp; Security</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/theme.js"></script>
+<script src="/assets/i18n.js"></script>
+</head>
+<body>
+<script src="/assets/app.js"></script>
+<script>
+function setPwStatus(msg, isError) {
+    const el = document.getElementById("pwStatus");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.className = isError ? "error-text" : "muted";
+}
+
+function setSessionStatus(msg, isError) {
+    const el = document.getElementById("sessionStatus");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.className = isError ? "error-text" : "muted";
+}
+
+function shortUserAgent(ua) {
+    if (!ua) return t("unknownDevice");
+    if (ua.length > 60) return escapeHtml(ua.slice(0, 60)) + "…";
+    return escapeHtml(ua);
+}
+
+async function loadSessions() {
+    const { sessions } = await api("/api/account/sessions");
+    document.getElementById("sessionsBody").innerHTML = sessions.map(s => `
+        <tr>
+          <td>${shortUserAgent(s.userAgent)}${s.current ? ` <span class="badge success">${escapeHtml(t("thisDeviceBadge"))}</span>` : ""}</td>
+          <td>${escapeHtml(s.ip || "unknown")}</td>
+          <td>${fmtWhen(s.createdAt)}</td>
+          <td>${fmtWhen(s.lastSeenAt)}</td>
+          <td>${s.current ? `<span class="muted">-</span>` : `<button class="danger" data-revoke="${escapeHtml(s.id)}">${escapeHtml(t("btnRevoke"))}</button>`}</td>
+        </tr>`).join("") || `<tr><td colspan="5" class="muted">${escapeHtml(t("noActiveSessions"))}</td></tr>`;
+
+    document.querySelectorAll("[data-revoke]").forEach(btn => btn.addEventListener("click", async () => {
+        try {
+            await api("/api/account/sessions/revoke", { method: "POST", body: { id: btn.getAttribute("data-revoke") } });
+            setSessionStatus(t("sessionRevoked"));
+            await loadSessions();
+        } catch (e) {
+            setSessionStatus(e.message, true);
+        }
+    }));
+}
+
+async function loadActivity() {
+    const { events } = await api("/api/account/activity");
+    const LABELS = {
+        dashboard_login: t("actLogin"), dashboard_logout: t("actLogout"),
+        password_change: t("actPasswordChange"), password_reset: t("actPasswordReset"),
+        session_revoked: t("actSessionRevoked"),
+    };
+    document.getElementById("activityBody").innerHTML = events.map(e => `
+        <tr>
+          <td>${escapeHtml(LABELS[e.action] || e.action)}</td>
+          <td><span class="badge ${e.result === "success" ? "success" : "danger"}">${escapeHtml(e.result)}</span></td>
+          <td>${fmtWhen(e.timestamp)}</td>
+        </tr>`).join("") || `<tr><td colspan="3" class="muted">${escapeHtml(t("noSecurityEvents"))}</td></tr>`;
+}
+
+async function changePassword() {
+    const currentPassword = document.getElementById("curPw").value;
+    const newPassword = document.getElementById("newPw").value;
+    const confirmPassword = document.getElementById("confirmPw").value;
+    if (!currentPassword || !newPassword) { setPwStatus(t("bothFieldsRequired"), true); return; }
+    if (newPassword !== confirmPassword) { setPwStatus(t("passwordsDontMatch"), true); return; }
+    try {
+        const r = await api("/api/account/change-password", { method: "POST", body: { currentPassword, newPassword } });
+        setPwStatus(`${t("passwordChanged")}${r.otherSessionsRevoked ? t("otherSessionsSignedOut").replace("{n}", r.otherSessionsRevoked) : ""}`);
+        document.getElementById("curPw").value = "";
+        document.getElementById("newPw").value = "";
+        document.getElementById("confirmPw").value = "";
+        await loadSessions();
+        await loadActivity();
+    } catch (e) {
+        setPwStatus(e.message, true);
+    }
+}
+
+async function render() {
+    const content = document.getElementById("content");
+    content.innerHTML = loadingState(t("loadingAccount"));
+
+    let me;
+    try {
+        me = await api("/api/auth/me");
+    } catch (e) {
+        content.innerHTML = e.offline ? offlineState() : errorState(e.message);
+        return;
+    }
+
+    content.innerHTML = `
+      ${me.role === "pending" ? `
+      <div class="card" style="border-color:var(--warning);margin-bottom:16px;">
+        <h3 style="margin-top:0;color:var(--warning);">${escapeHtml(t("awaitingApproval"))}</h3>
+        <p class="muted">${escapeHtml(t("awaitingApprovalMsg"))}</p>
+      </div>` : ""}
+      <div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="card">
+          <h3 style="margin-top:0;">${escapeHtml(t("secProfile"))}</h3>
+          <p><strong>${escapeHtml(me.username)}</strong> <span class="badge info">${escapeHtml(me.roleLabel)}</span>${me.isPrimaryOwner ? ` <span class="badge protected">${escapeHtml(t("primaryOwnerBadge"))}</span>` : ""}</p>
+          <p class="muted">${escapeHtml(t("lastLoginLabel"))} ${fmtWhen(me.lastLoginAt)}</p>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0;">${escapeHtml(t("secChangePassword"))}</h3>
+          <div class="form-row"><label for="curPw">${escapeHtml(t("currentPasswordLabel"))}</label><input type="password" id="curPw" autocomplete="current-password"></div>
+          <div class="form-row"><label for="newPw">${escapeHtml(t("newPasswordFieldLabel"))}</label><input type="password" id="newPw" autocomplete="new-password" placeholder="${escapeHtml(t("newPasswordPlaceholder"))}"></div>
+          <div class="form-row"><label for="confirmPw">${escapeHtml(t("confirmNewPasswordLabel"))}</label><input type="password" id="confirmPw" autocomplete="new-password"></div>
+          <button class="primary" id="changePwBtn">${escapeHtml(t("secChangePassword"))}</button>
+          <div id="pwStatus" class="muted" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <h3 style="margin-top:24px;">${escapeHtml(t("secActiveSessions"))}</h3>
+      <p class="subtitle">${escapeHtml(t("activeSessionsSubtitle").replace("{u}", me.username))}</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>${escapeHtml(t("tableDevice"))}</th><th>${escapeHtml(t("tableIp"))}</th><th>${escapeHtml(t("tableSignedIn"))}</th><th>${escapeHtml(t("tableLastSeen"))}</th><th></th></tr></thead>
+        <tbody id="sessionsBody"></tbody>
+      </table>
+      </div>
+      <div id="sessionStatus" class="muted" style="margin-top:8px;"></div>
+
+      <h3 style="margin-top:24px;">${escapeHtml(t("secSecurityEvents"))}</h3>
+      <p class="subtitle">${escapeHtml(t("securityEventsSubtitle"))}</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>${escapeHtml(t("tableEvent"))}</th><th>${escapeHtml(t("tableResult"))}</th><th>${escapeHtml(t("tableWhen"))}</th></tr></thead>
+        <tbody id="activityBody"></tbody>
+      </table>
+      </div>`;
+
+    await loadSessions();
+    await loadActivity();
+    document.getElementById("changePwBtn").addEventListener("click", changePassword);
+}
+
+(async () => {
+    await requireAuth();
+    renderShell("/account", t("accountSecurity"));
+    await render();
+})();
+</script>
+</body>
+</html>

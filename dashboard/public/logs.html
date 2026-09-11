@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asta Dashboard - Logs</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/theme.js"></script>
+<script src="/assets/i18n.js"></script>
+</head>
+<body>
+<script src="/assets/app.js"></script>
+<script>
+let nextOffset = null;
+let currentEntries = [];
+
+function buildQuery() {
+    const params = new URLSearchParams();
+    const category = document.getElementById("categoryFilter").value;
+    const search = document.getElementById("searchBox").value.trim();
+    const dateFrom = document.getElementById("dateFrom").value;
+    const dateTo = document.getElementById("dateTo").value;
+    if (category) params.set("category", category);
+    if (search) params.set("search", search);
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
+    return params;
+}
+
+function renderEntries(append) {
+    const list = document.getElementById("logList");
+    if (!currentEntries.length && !append) {
+        list.innerHTML = "";
+        list.appendChild(wrapState(emptyState(t("noLogEntriesFound"), t("tryWideningFilters"))));
+        return;
+    }
+    const html = currentEntries.map(e => `
+      <div class="log-entry">
+        <div class="meta"><span class="badge ${e.category}">${e.category}</span> <span class="muted">${escapeHtml(e.timestamp || "")}</span></div>
+        ${escapeHtml(e.text)}
+      </div>`).join("");
+    if (append) {
+        list.insertAdjacentHTML("beforeend", html);
+    } else {
+        list.innerHTML = html;
+    }
+}
+
+function wrapState(html) {
+    const div = document.createElement("div");
+    div.innerHTML = html;
+    return div.firstElementChild;
+}
+
+async function loadPage(reset) {
+    if (reset) {
+        nextOffset = null;
+        currentEntries = [];
+    }
+    const params = buildQuery();
+    if (nextOffset) params.set("before", nextOffset);
+
+    const listEl = document.getElementById("logList");
+    if (reset) listEl.innerHTML = loadingState(t("loadingLogs"));
+
+    let data;
+    try {
+        data = await api(`/api/logs?${params.toString()}`);
+    } catch (e) {
+        listEl.innerHTML = e.offline ? offlineState() : errorState(e.message);
+        return;
+    }
+    currentEntries = data.entries;
+    renderEntries(!reset);
+    nextOffset = data.nextOffset;
+    document.getElementById("loadMoreBtn").style.display = data.done ? "none" : "inline-block";
+}
+
+async function render() {
+    const content = document.getElementById("content");
+    content.innerHTML = `
+      <div class="toolbar">
+        <select id="categoryFilter">
+          <option value="">${escapeHtml(t("allCategories"))}</option>
+          <option value="GENERAL">${escapeHtml(t("catGeneral"))}</option>
+          <option value="COMMAND">${escapeHtml(t("catCommand"))}</option>
+          <option value="ERROR">${escapeHtml(t("catError"))}</option>
+          <option value="SECURITY">${escapeHtml(t("catSecurity"))}</option>
+        </select>
+        <input type="text" id="searchBox" placeholder="${escapeHtml(t("searchLogsPlaceholder"))}">
+        <input type="date" id="dateFrom">
+        <input type="date" id="dateTo">
+        <button class="primary" id="applyBtn">${escapeHtml(t("btnApply"))}</button>
+      </div>
+      <div class="feed" id="logList"></div>
+      <div style="text-align:center; margin-top:14px;">
+        <button class="secondary" id="loadMoreBtn" style="display:none">${escapeHtml(t("btnLoadMore"))}</button>
+      </div>`;
+
+    document.getElementById("applyBtn").addEventListener("click", () => loadPage(true));
+    document.getElementById("loadMoreBtn").addEventListener("click", () => loadPage(false));
+
+    await loadPage(true);
+}
+
+(async () => {
+    await requireAuth();
+    renderShell("/logs", t("logs"));
+    await render();
+})();
+</script>
+</body>
+</html>

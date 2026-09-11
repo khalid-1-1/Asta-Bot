@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asta Dashboard - Settings</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/theme.js"></script>
+<script src="/assets/i18n.js"></script>
+</head>
+<body>
+<script src="/assets/app.js"></script>
+<script>
+// The server's config schema ships an English `label` per key (see
+// dashboard/lib/settings-store.js). We translate known keys client-side
+// via "cfg_<key>" dictionary entries and fall back to the server's own
+// label for any future key that hasn't been added to the dictionary yet,
+// so a new setting never renders as a raw i18n key.
+function cfgLabel(key, serverLabel) {
+    const translated = t("cfg_" + key);
+    return translated === "cfg_" + key ? serverLabel : translated;
+}
+
+async function render() {
+    const content = document.getElementById("content");
+    content.innerHTML = loadingState(t("loadingSettings"));
+
+    let cfg;
+    try {
+        cfg = await api("/api/config");
+    } catch (e) {
+        content.innerHTML = e.offline ? offlineState() : errorState(e.message);
+        return;
+    }
+    const { values, schema } = cfg;
+
+    const rows = Object.entries(schema).map(([key, def]) => `
+      <div class="form-row">
+        <label for="cfg_${key}">${escapeHtml(cfgLabel(key, def.label))}</label>
+        <input type="number" id="cfg_${key}" min="${def.min}" max="${def.max}" value="${values[key]}">
+        <span class="muted">(${def.min}-${def.max}, ${escapeHtml(t("defaultSuffix"))} ${def.default})</span>
+      </div>`).join("");
+
+    content.innerHTML = `
+      <p class="subtitle">${escapeHtml(t("settingsSubtitle"))}</p>
+      <div class="card" style="max-width:640px;">
+        ${rows}
+      </div>
+      <div class="toolbar">
+        <button class="primary" id="saveBtn">${escapeHtml(t("btnSaveChanges"))}</button>
+        <span class="muted" id="saveStatus"></span>
+      </div>`;
+
+    document.getElementById("saveBtn").addEventListener("click", async () => {
+        const status = document.getElementById("saveStatus");
+        const patch = {};
+        for (const key of Object.keys(schema)) {
+            const el = document.getElementById(`cfg_${key}`);
+            patch[key] = Number(el.value);
+        }
+        try {
+            const res = await api("/api/config", { method: "POST", body: patch });
+            const errorKeys = Object.keys(res.errors || {});
+            status.textContent = errorKeys.length
+                ? t("savedWithErrors").replace("{k}", errorKeys.join(", "))
+                : t("saved");
+            status.className = errorKeys.length ? "error-text" : "muted";
+        } catch (e) {
+            status.textContent = e.message;
+            status.className = "error-text";
+        }
+        await render();
+    });
+}
+
+(async () => {
+    await requireAuth();
+    renderShell("/settings", t("settings"));
+    await render();
+})();
+</script>
+</body>
+</html>

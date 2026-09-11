@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asta Dashboard - Controls</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/theme.js"></script>
+<script src="/assets/i18n.js"></script>
+</head>
+<body>
+<script src="/assets/app.js"></script>
+<script>
+function setStatus(msg, isError) {
+    const el = document.getElementById("ctrlStatus");
+    el.textContent = msg;
+    el.className = isError ? "error-text" : "muted";
+}
+
+async function reloadAll(btn) {
+    btn.disabled = true;
+    setStatus(t("reloadingAllPlugins"));
+    try {
+        const res = await api("/api/plugins/reload", { method: "POST", body: {} });
+        setStatus(res.message, !res.ok);
+    } catch (e) {
+        setStatus(e.message, true);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function reloadOne(btn) {
+    const command = document.getElementById("reloadCommand").value.trim();
+    if (!command) return setStatus(t("enterCommandFirst"), true);
+    btn.disabled = true;
+    setStatus(t("reloadingCommand").replace("{c}", command));
+    try {
+        const res = await api("/api/plugins/reload", { method: "POST", body: { plugin: command } });
+        setStatus(res.message, res.reloaded === false);
+    } catch (e) {
+        setStatus(e.message, true);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function refreshStats(btn) {
+    btn.disabled = true;
+    setStatus(t("refreshingStats"));
+    try {
+        await api("/api/stats");
+        setStatus(t("statsRefreshed"));
+    } catch (e) {
+        setStatus(e.message, true);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function viewStatus(btn) {
+    btn.disabled = true;
+    try {
+        const { status } = await api("/api/status");
+        setStatus(t("statusLine").replace("{s}", status.online ? t("online") : t("offline")).replace("{p}", status.pluginCount).replace("{c}", status.commandCount));
+    } catch (e) {
+        setStatus(e.message, true);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// Stage 9, item #15 (Dashboard Integration).
+async function viewSystemHealth(btn) {
+    btn.disabled = true;
+    try {
+        const { health } = await api("/api/health");
+        const rec = health.recovery || { totalAttempts: 0, totalFailures: 0, lastRecovery: null };
+        setStatus(
+            t("systemHealthLine")
+                .replace("{s}", health.watchdogState || "disabled")
+                .replace("{m}", health.memory ? health.memory.rssMB + "MB" : "n/a")
+                .replace("{a}", rec.totalAttempts)
+                .replace("{f}", rec.totalFailures) +
+            (rec.lastRecovery ? t("lastRecoverySuffix").replace("{sub}", rec.lastRecovery.subsystem).replace("{res}", rec.lastRecovery.result) : "")
+        );
+    } catch (e) {
+        setStatus(e.message, true);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// Stage 9, item #5 (Graceful Restart). Requires an explicit confirmation
+// click - this can never be triggered by a single accidental click.
+async function restartBot(btn) {
+    if (!confirm(t("confirmRestart"))) return;
+    btn.disabled = true;
+    setStatus(t("restartRequested"));
+    try {
+        const res = await api("/api/system/restart", { method: "POST", body: {} });
+        setStatus(res.message || t("restartRequestedMsg"));
+    } catch (e) {
+        setStatus(e.message, true);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function controlCard(iconName, tone, title, desc, bodyHtml) {
+    return `<div class="card">
+        <div class="top-row" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+            <div class="icon-wrap ${tone}">${icon(iconName)}</div>
+            <div>
+                <div style="font-weight:650;font-size:13.5px;">${title}</div>
+                <div class="sub" style="margin-top:0;">${desc}</div>
+            </div>
+        </div>
+        ${bodyHtml}
+    </div>`;
+}
+
+async function render() {
+    const content = document.getElementById("content");
+    const restartCard = can("bot.control")
+        ? controlCard("controls", "danger", escapeHtml(t("ctrlRestartTitle")), escapeHtml(t("ctrlRestartDesc")), `<button class="danger" id="restartBtn">${escapeHtml(t("btnRestartNow"))}</button>`)
+        : "";
+    content.innerHTML = `
+      <p class="subtitle">${escapeHtml(t("ctrlSubtitle"))}</p>
+      <div class="grid cols-2">
+        ${controlCard("plugins", "info", escapeHtml(t("ctrlReloadAllTitle")), escapeHtml(t("ctrlReloadAllDesc")), `<button class="primary" id="reloadAllBtn">${escapeHtml(t("btnReloadAll"))}</button>`)}
+        ${controlCard("plugins", "info", escapeHtml(t("ctrlReloadOneTitle")), escapeHtml(t("ctrlReloadOneDesc")), `
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <input type="text" id="reloadCommand" placeholder="${escapeHtml(t("commandNamePlaceholder"))}" style="flex:1;min-width:160px;">
+              <button class="primary" id="reloadOneBtn">${escapeHtml(t("btnReloadPlugin"))}</button>
+            </div>`)}
+        ${controlCard("stats", "", escapeHtml(t("ctrlRefreshStatsTitle")), escapeHtml(t("ctrlRefreshStatsDesc")), `<button class="primary" id="refreshStatsBtn">${escapeHtml(t("btnRefresh"))}</button>`)}
+        ${controlCard("overview", "success", escapeHtml(t("ctrlViewStatusTitle")), escapeHtml(t("ctrlViewStatusDesc")), `<button class="primary" id="viewStatusBtn">${escapeHtml(t("btnCheckStatus"))}</button>`)}
+        ${controlCard("alerts", "warning", escapeHtml(t("ctrlHealthTitle")), escapeHtml(t("ctrlHealthDesc")), `<button class="primary" id="viewHealthBtn">${escapeHtml(t("btnCheckHealth"))}</button>`)}
+        ${restartCard}
+      </div>
+      <div id="ctrlStatus" class="muted" style="margin-top:16px;"></div>`;
+
+    document.getElementById("reloadAllBtn").addEventListener("click", (e) => reloadAll(e.target));
+    document.getElementById("reloadOneBtn").addEventListener("click", (e) => reloadOne(e.target));
+    document.getElementById("refreshStatsBtn").addEventListener("click", (e) => refreshStats(e.target));
+    document.getElementById("viewStatusBtn").addEventListener("click", (e) => viewStatus(e.target));
+    document.getElementById("viewHealthBtn").addEventListener("click", (e) => viewSystemHealth(e.target));
+    const restartBtn = document.getElementById("restartBtn");
+    if (restartBtn) restartBtn.addEventListener("click", (e) => restartBot(e.target));
+}
+
+(async () => {
+    await requireAuth();
+    renderShell("/controls", t("controls"));
+    await render();
+})();
+</script>
+</body>
+</html>

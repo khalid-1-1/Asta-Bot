@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asta Dashboard - Alerts</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/theme.js"></script>
+<script src="/assets/i18n.js"></script>
+</head>
+<body>
+<script src="/assets/app.js"></script>
+<script>
+let pollTimer = null;
+
+async function render() {
+    const content = document.getElementById("content");
+    let alerts;
+    try {
+        const res = await api("/api/alerts");
+        alerts = res.alerts;
+    } catch (e) {
+        // Keep any already-displayed alerts on screen if a background
+        // refresh fails; only show the error state on the very first load.
+        if (!content.dataset.loaded) withPreservedScroll(() => { content.innerHTML = e.offline ? offlineState() : errorState(e.message); });
+        return;
+    }
+    content.dataset.loaded = "1";
+
+    const critical = alerts.filter(a => a.level === "critical").length;
+    const warning = alerts.filter(a => a.level === "warning").length;
+
+    const html = `
+    <p class="subtitle">${t("alertsSubtitle")}</p>
+    <div class="grid">
+      <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("statActiveAlerts"))}</div><div class="icon-wrap ${alerts.length ? "warning" : "success"}">${icon("alerts")}</div></div><div class="value ${alerts.length ? "warn" : "ok"}">${alerts.length}</div></div>
+      <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("statCritical"))}</div><div class="icon-wrap ${critical ? "danger" : ""}">${icon("alerts")}</div></div><div class="value ${critical ? "bad" : ""}">${critical}</div></div>
+      <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("statWarning"))}</div><div class="icon-wrap ${warning ? "warning" : ""}">${icon("alerts")}</div></div><div class="value ${warning ? "warn" : ""}">${warning}</div></div>
+    </div>
+    <div class="feed">
+      ${alerts.length ? alerts.map(a => `
+        <div class="alert-item ${a.level}">
+          <span><span class="badge ${a.level}">${escapeHtml(a.type)}</span> &nbsp; ${escapeHtml(a.message)}</span>
+          <span class="when">${escapeHtml(t("alertFirst"))} ${fmtWhen(a.firstSeenAt)}<br>${escapeHtml(t("alertLast"))} ${fmtWhen(a.lastSeenAt)}</span>
+        </div>`).join("") : `<div class="notif-item"><span class="muted">${escapeHtml(t("noActiveAlertsHealthy"))}</span></div>`}
+    </div>`;
+    withPreservedScroll(() => { content.innerHTML = html; });
+}
+
+(async () => {
+    await requireAuth();
+    renderShell("/alerts", t("alerts"));
+    await render();
+    pollTimer = setInterval(render, 15000);
+})();
+</script>
+</body>
+</html>

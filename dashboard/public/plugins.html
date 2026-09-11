@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asta Dashboard - Plugins</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/theme.js"></script>
+<script src="/assets/i18n.js"></script>
+</head>
+<body>
+<script src="/assets/app.js"></script>
+<script>
+let allPlugins = [];
+let lastReload = null;
+
+function renderTable(filter) {
+    const rows = allPlugins
+        .filter(p => !filter || p.command.toLowerCase().includes(filter) || (p.category || "").toLowerCase().includes(filter))
+        .map(p => `
+        <tr>
+          <td>${escapeHtml(p.command)}${p.protected ? ` <span class="badge protected" title="${escapeHtml(t('protectedTitle'))}">${escapeHtml(t('protectedBadge'))}</span>` : ""}</td>
+          <td>${p.aliases.map(escapeHtml).join(", ") || "-"}</td>
+          <td>${escapeHtml(p.category)}</td>
+          <td class="wrap">${escapeHtml(p.description || "-")}</td>
+          <td>${escapeHtml(p.requiredLevel)}</td>
+          <td>${escapeHtml(p.scope)}</td>
+          <td>${p.cooldownMs ?? "-"}</td>
+          <td>${escapeHtml(p.file)}</td>
+          <td><span class="badge ${p.disabled ? "disabled" : (p.status === "active" ? "success" : "invalid")}">${p.disabled ? escapeHtml(t("statDisabled")) : escapeHtml(p.status)}</span></td>
+          <td>${p.errorCount ? `<span class="badge warning">${p.errorCount}</span>` : "0"}${p.lastError ? ` <span class="muted" title="${escapeHtml(p.lastError.message)}">${escapeHtml(t("hoverHint"))}</span>` : ""}</td>
+          <td style="white-space:nowrap;">
+            <button class="secondary" data-reload="${escapeHtml(p.command)}">${escapeHtml(t("btnReload"))}</button>
+            ${p.disabled
+                ? `<button class="secondary" data-enable="${escapeHtml(p.command)}">${escapeHtml(t("btnEnable"))}</button>`
+                : `<button class="danger" data-disable="${escapeHtml(p.command)}" ${p.protected ? `disabled title="${escapeHtml(t('protectedPluginTitle'))}"` : ""}>${escapeHtml(t("btnDisable"))}</button>`}
+          </td>
+        </tr>`).join("");
+
+    document.getElementById("pluginsTableBody").innerHTML = rows || `<tr><td colspan="11" class="muted">${escapeHtml(t("noPluginsMatch"))}</td></tr>`;
+
+    document.querySelectorAll("[data-reload]").forEach(btn => {
+        btn.addEventListener("click", () => reloadPlugin(btn.getAttribute("data-reload"), btn));
+    });
+    document.querySelectorAll("[data-enable]").forEach(btn => {
+        btn.addEventListener("click", () => togglePlugin(btn.getAttribute("data-enable"), true, btn));
+    });
+    document.querySelectorAll("[data-disable]").forEach(btn => {
+        btn.addEventListener("click", () => togglePlugin(btn.getAttribute("data-disable"), false, btn));
+    });
+}
+
+async function reloadPlugin(command, btn) {
+    const status = document.getElementById("reloadStatus");
+    if (btn) btn.disabled = true;
+    status.textContent = t("reloading");
+    status.className = "muted";
+    try {
+        const res = await api("/api/plugins/reload", { method: "POST", body: { plugin: command } });
+        status.textContent = res.message;
+        status.className = res.reloaded === false ? "error-text" : "muted";
+        await loadPlugins();
+    } catch (e) {
+        status.textContent = e.message;
+        status.className = "error-text";
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function togglePlugin(command, enable, btn) {
+    const status = document.getElementById("reloadStatus");
+    if (btn) btn.disabled = true;
+    status.textContent = (enable ? t("enablingPlugin") : t("disablingPlugin")).replace("{c}", command);
+    status.className = "muted";
+    try {
+        const res = await api(`/api/plugins/${enable ? "enable" : "disable"}`, { method: "POST", body: { plugin: command } });
+        status.textContent = res.ok ? (enable ? t("pluginEnabled") : t("pluginDisabled")).replace("{c}", command) : t("failedPrefix").replace("{r}", res.reason);
+        status.className = res.ok ? "muted" : "error-text";
+        await loadPlugins();
+    } catch (e) {
+        status.textContent = e.message;
+        status.className = "error-text";
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function loadPlugins() {
+    const { plugins, lastReload: lr } = await api("/api/plugins");
+    allPlugins = plugins;
+    lastReload = lr;
+    const lrEl = document.getElementById("lastReload");
+    if (lrEl) lrEl.textContent = lr ? `${t("lastReloadPrefix")} ${fmtRelative(lr)}` : t("notReloadedYet");
+    renderTable(document.getElementById("search")?.value.toLowerCase() || "");
+}
+
+async function render() {
+    const content = document.getElementById("content");
+    content.innerHTML = loadingState(t("loadingPlugins"));
+
+    let summary;
+    try {
+        summary = await api("/api/plugins");
+    } catch (e) {
+        content.innerHTML = e.offline ? offlineState() : errorState(e.message);
+        return;
+    }
+
+    const activeCount = summary.plugins.filter(p => !p.disabled && p.status === "active").length;
+    const disabledCount = summary.plugins.filter(p => p.disabled).length;
+    const invalidCount = summary.plugins.filter(p => p.status === "invalid").length;
+
+    content.innerHTML = `
+      <div class="grid">
+        <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("statTotalPlugins"))}</div><div class="icon-wrap">${icon("plugins")}</div></div><div class="value">${summary.plugins.length}</div></div>
+        <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("statActive"))}</div><div class="icon-wrap success">${icon("plugins")}</div></div><div class="value ok">${activeCount}</div></div>
+        <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("statDisabled"))}</div><div class="icon-wrap">${icon("plugins")}</div></div><div class="value">${disabledCount}</div></div>
+        <div class="card stat-card"><div class="top-row"><div class="label">${escapeHtml(t("statInvalid"))}</div><div class="icon-wrap ${invalidCount ? "danger" : ""}">${icon("plugins")}</div></div><div class="value ${invalidCount ? "bad" : ""}">${invalidCount}</div></div>
+      </div>
+
+      <div class="toolbar">
+        <input type="text" id="search" placeholder="${escapeHtml(t("filterPlaceholder"))}">
+        <button class="primary" id="reloadAllBtn">${escapeHtml(t("btnReloadAll"))}</button>
+        <span class="muted" id="reloadStatus"></span>
+        <span class="muted" id="lastReload" style="margin-inline-start:auto"></span>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>${escapeHtml(t("tableCommand"))}</th><th>${escapeHtml(t("tableAliases"))}</th><th>${escapeHtml(t("tableCategory"))}</th><th class="wrap">${escapeHtml(t("tableDescription"))}</th>
+          <th>${escapeHtml(t("tableLevel"))}</th><th>${escapeHtml(t("tableScope"))}</th><th>${escapeHtml(t("tableCooldown"))}</th><th>${escapeHtml(t("tableFile"))}</th><th>${escapeHtml(t("tableStatus"))}</th><th>${escapeHtml(t("tableErrors"))}</th><th></th>
+        </tr></thead>
+        <tbody id="pluginsTableBody"></tbody>
+      </table>
+      </div>`;
+
+    document.getElementById("search").addEventListener("input", (e) => renderTable(e.target.value.toLowerCase()));
+    document.getElementById("reloadAllBtn").addEventListener("click", () => reloadPlugin(null, document.getElementById("reloadAllBtn")));
+
+    await loadPlugins();
+}
+
+(async () => {
+    await requireAuth();
+    renderShell("/plugins", t("plugins"));
+    await render();
+})();
+</script>
+</body>
+</html>

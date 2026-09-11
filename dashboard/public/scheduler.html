@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asta Dashboard - Scheduler</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/theme.js"></script>
+<script src="/assets/i18n.js"></script>
+</head>
+<body>
+<script src="/assets/app.js"></script>
+<script>
+let allowedActions = [];
+
+const DAY_KEY = { SU: "daySun", MO: "dayMon", TU: "dayTue", WE: "dayWed", TH: "dayThu", FR: "dayFri", SA: "daySat" };
+function dayLabel(code) {
+    return DAY_KEY[code] ? t(DAY_KEY[code]) : code;
+}
+
+function scheduleLabel(s) {
+    if (!s) return "-";
+    if (s.type === "once") return t("onceAtLabel").replace("{w}", fmtWhen(s.at));
+    if (s.type === "daily") return t("dailyAtLabel").replace("{t}", escapeHtml(s.time));
+    if (s.type === "weekly") return t("weeklyOnLabel").replace("{d}", escapeHtml(dayLabel(s.dayOfWeek))).replace("{t}", escapeHtml(s.time));
+    return s.type;
+}
+
+async function loadTasks() {
+    const { tasks, allowedActions: actions } = await api("/api/scheduler/tasks");
+    allowedActions = actions;
+    document.getElementById("tasksBody").innerHTML = tasks.length ? tasks.map(task => `
+        <tr>
+          <td>${escapeHtml(task.name)}</td>
+          <td>${scheduleLabel(task.schedule)}</td>
+          <td>${escapeHtml(task.action.type)}</td>
+          <td><span class="badge ${task.enabled ? "active" : "disabled"}">${task.enabled ? escapeHtml(t("enabledBadge")) : escapeHtml(t("disabledBadge"))}</span></td>
+          <td>${fmtWhen(task.lastRun)}</td>
+          <td>${fmtWhen(task.nextRun)}</td>
+          <td>${task.lastResult ? `<span class="${task.lastResult.ok ? "" : "error-text"}" title="${escapeHtml(task.lastResult.message)}">${task.lastResult.ok ? escapeHtml(t("resultOk")) : escapeHtml(t("resultFailed"))}</span>` : "-"}</td>
+          <td style="white-space:nowrap;">
+            <button class="secondary" data-run="${task.id}">${escapeHtml(t("btnRunNow"))}</button>
+            <button class="secondary" data-toggle="${task.id}" data-enabled="${task.enabled}">${task.enabled ? escapeHtml(t("btnDisable")) : escapeHtml(t("btnEnable"))}</button>
+            <button class="danger" data-delete="${task.id}">${escapeHtml(t("btnDelete"))}</button>
+          </td>
+        </tr>`).join("") : `<tr><td colspan="8" class="muted">${escapeHtml(t("noScheduledTasks"))}</td></tr>`;
+
+    document.querySelectorAll("[data-run]").forEach(btn => btn.addEventListener("click", () => runTask(btn.getAttribute("data-run"))));
+    document.querySelectorAll("[data-toggle]").forEach(btn => btn.addEventListener("click", () => toggleTask(btn.getAttribute("data-toggle"), btn.getAttribute("data-enabled") !== "true")));
+    document.querySelectorAll("[data-delete]").forEach(btn => btn.addEventListener("click", () => deleteTask(btn.getAttribute("data-delete"))));
+}
+
+async function runTask(id) {
+    const status = document.getElementById("taskStatus");
+    status.textContent = t("running");
+    try {
+        const res = await api("/api/scheduler/tasks/run", { method: "POST", body: { id } });
+        status.textContent = res.result?.message || (res.ok ? t("done") : t("failed"));
+        status.className = res.result?.ok === false ? "error-text" : "muted";
+    } catch (e) {
+        status.textContent = e.message;
+        status.className = "error-text";
+    }
+    await loadTasks();
+}
+
+async function toggleTask(id, enabled) {
+    try {
+        await api("/api/scheduler/tasks/update", { method: "POST", body: { id, enabled } });
+    } catch (e) {
+        document.getElementById("taskStatus").textContent = e.message;
+        document.getElementById("taskStatus").className = "error-text";
+    }
+    await loadTasks();
+}
+
+async function deleteTask(id) {
+    if (!confirm(t("confirmDeleteTask"))) return;
+    try {
+        await api("/api/scheduler/tasks/delete", { method: "POST", body: { id } });
+    } catch (e) {
+        document.getElementById("taskStatus").textContent = e.message;
+        document.getElementById("taskStatus").className = "error-text";
+    }
+    await loadTasks();
+}
+
+function scheduleFieldsHtml() {
+    return `
+    <select id="scheduleType">
+      <option value="once">${escapeHtml(t("optOnce"))}</option>
+      <option value="daily">${escapeHtml(t("optDaily"))}</option>
+      <option value="weekly">${escapeHtml(t("optWeekly"))}</option>
+    </select>
+    <input type="datetime-local" id="onceAt" style="display:none">
+    <input type="time" id="dailyTime" style="display:none" value="03:00">
+    <select id="weeklyDay" style="display:none">
+      <option value="SU">${escapeHtml(t("daySun"))}</option><option value="MO">${escapeHtml(t("dayMon"))}</option><option value="TU">${escapeHtml(t("dayTue"))}</option>
+      <option value="WE">${escapeHtml(t("dayWed"))}</option><option value="TH">${escapeHtml(t("dayThu"))}</option><option value="FR">${escapeHtml(t("dayFri"))}</option><option value="SA">${escapeHtml(t("daySat"))}</option>
+    </select>
+    <input type="time" id="weeklyTime" style="display:none" value="03:00">`;
+}
+
+function wireScheduleTypeToggle() {
+    const typeEl = document.getElementById("scheduleType");
+    const update = () => {
+        document.getElementById("onceAt").style.display = typeEl.value === "once" ? "inline-block" : "none";
+        document.getElementById("dailyTime").style.display = typeEl.value === "daily" ? "inline-block" : "none";
+        document.getElementById("weeklyDay").style.display = typeEl.value === "weekly" ? "inline-block" : "none";
+        document.getElementById("weeklyTime").style.display = typeEl.value === "weekly" ? "inline-block" : "none";
+    };
+    typeEl.addEventListener("change", update);
+    update();
+}
+
+async function createTask() {
+    const status = document.getElementById("taskStatus");
+    const name = document.getElementById("taskName").value.trim();
+    const actionType = document.getElementById("actionType").value;
+    const type = document.getElementById("scheduleType").value;
+    let schedule;
+    if (type === "once") {
+        const v = document.getElementById("onceAt").value;
+        if (!v) { status.textContent = t("pickDateTime"); status.className = "error-text"; return; }
+        schedule = { type: "once", at: new Date(v).toISOString() };
+    } else if (type === "daily") {
+        schedule = { type: "daily", time: document.getElementById("dailyTime").value };
+    } else {
+        schedule = { type: "weekly", dayOfWeek: document.getElementById("weeklyDay").value, time: document.getElementById("weeklyTime").value };
+    }
+    if (!name) { status.textContent = t("nameRequired"); status.className = "error-text"; return; }
+
+    try {
+        const res = await api("/api/scheduler/tasks", { method: "POST", body: { name, schedule, action: { type: actionType }, enabled: true } });
+        status.textContent = res.ok ? t("taskCreated") : t("failedPrefix").replace("{r}", res.reason);
+        status.className = res.ok ? "muted" : "error-text";
+        document.getElementById("taskName").value = "";
+    } catch (e) {
+        status.textContent = e.message;
+        status.className = "error-text";
+    }
+    await loadTasks();
+}
+
+async function render() {
+    const content = document.getElementById("content");
+    content.innerHTML = loadingState(t("loadingScheduledTasks"));
+
+    try {
+        await api("/api/scheduler/tasks");
+    } catch (e) {
+        content.innerHTML = e.offline ? offlineState() : errorState(e.message);
+        return;
+    }
+
+    content.innerHTML = `
+      <p class="subtitle">${escapeHtml(t("schedulerSubtitle"))}</p>
+      <div class="toolbar" style="flex-wrap:wrap;">
+        <input type="text" id="taskName" placeholder="${escapeHtml(t("taskNamePlaceholder"))}">
+        <select id="actionType"></select>
+        ${scheduleFieldsHtml()}
+        <button class="primary" id="createTaskBtn">${escapeHtml(t("btnCreateTask"))}</button>
+        <span class="muted" id="taskStatus"></span>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>${escapeHtml(t("tableName"))}</th><th>${escapeHtml(t("tableSchedule"))}</th><th>${escapeHtml(t("tableAction"))}</th><th>${escapeHtml(t("tableStatus"))}</th><th>${escapeHtml(t("tableLastRun"))}</th><th>${escapeHtml(t("tableNextRun"))}</th><th>${escapeHtml(t("tableLastResult"))}</th><th></th></tr></thead>
+        <tbody id="tasksBody"></tbody>
+      </table>
+      </div>`;
+
+    await loadTasks();
+    document.getElementById("actionType").innerHTML = allowedActions.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("");
+    wireScheduleTypeToggle();
+    document.getElementById("createTaskBtn").addEventListener("click", createTask);
+}
+
+(async () => {
+    await requireAuth();
+    renderShell("/scheduler", t("scheduler"));
+    await render();
+})();
+</script>
+</body>
+</html>
