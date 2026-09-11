@@ -1,0 +1,30 @@
+{
+  "name": "asta",
+  "version": "1.0.0",
+  "description": "بوت واتساب قابل للتخصيص مبني على نواة Asta، مع نظام إضافات ولوحة تحكم ويب ونظام صلاحيات ومراقبة.",
+  "license": "ISC",
+  "author": "kurama",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "npm run test:dashboard && npm run test:stage8 && npm run test:stage11-12 && npm run test:backup && npm run test:watchdog",
+    "start": "node index.js",
+    "test:dashboard": "node dashboard/test/dashboard.test.mjs",
+    "test:stage8": "node dashboard/test/dashboard.stage8.test.mjs",
+    "test:stage11-12": "node dashboard/test/dashboard.stage11-12.test.mjs",
+    "test:backup": "node dashboard/backup.selftest.mjs",
+    "test:watchdog": "node core/watchdog.selftest.mjs"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "axios": "^1.13.2",
+    "chalk": "^5.6.2",
+    "delay": "^7.0.0",
+    "fs-extra": "^11.3.2",
+    "jsonion": "^1.0.0",
+    "pino": "^10.1.0",
+    "ora": "5.4.1",
+    "tmp": "0.2.3",
+    "translate": "3.0.0"
+  }
+}
